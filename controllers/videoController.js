@@ -1,4 +1,15 @@
-import { exec } from "child_process";
+import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
+
+// ========================
+// DOWNLOAD DIRECTORY
+// ========================
+const DOWNLOAD_DIR = path.resolve("downloads");
+
+if (!fs.existsSync(DOWNLOAD_DIR)) {
+  fs.mkdirSync(DOWNLOAD_DIR);
+}
 
 // ========================
 // INFO
@@ -10,34 +21,27 @@ export const getInfo = (req, res) => {
     return res.status(400).json({ error: "invalid URL" });
   }
 
-  const cmd = `python -m yt_dlp --no-playlist --geo-bypass -J "${url}"`;
+  const cmd = spawn("python", [
+    "-m",
+    "yt_dlp",
+    "--no-playlist",
+    "--geo-bypass",
+    "-J",
+    url,
+  ]);
 
-  exec(cmd, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout) => {
-    if (err) {
-      console.log("yt-dlp error:", err);
-      return res.status(500).json({
-        error: err.message,
-      });
-    }
+  let output = "";
 
+  cmd.stdout.on("data", (data) => {
+    output += data.toString();
+  });
+
+  cmd.on("close", () => {
     try {
-      const data = JSON.parse(stdout);
-
-      const seen = new Set();
+      const data = JSON.parse(output);
 
       const formats = (data.formats || [])
-        .filter(
-          (f) =>
-            f.ext !== "mhtml" &&
-            f.vcodec !== "none" &&
-            f.height
-        )
-        .filter((f) => {
-          if (seen.has(f.height)) return false;
-          seen.add(f.height);
-          return true;
-        })
-        .sort((a, b) => (b.height || 0) - (a.height || 0))
+        .filter((f) => f.vcodec !== "none" && f.height)
         .map((f) => ({
           format_id: f.format_id,
           quality: `${f.height}p`,
@@ -45,41 +49,80 @@ export const getInfo = (req, res) => {
           size: f.filesize
             ? `${(f.filesize / 1024 / 1024).toFixed(2)} MB`
             : null,
-        }));
+        }))
+        .sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
 
-      res.json({
+      return res.json({
         title: data.title,
         thumbnail: data.thumbnail,
         duration: data.duration,
         formats,
       });
-    } catch (e) {
-      console.log("parse error:", e);
-      res.status(500).json({ error: "parse error" });
+    } catch {
+      return res.status(500).json({ error: "parse error" });
     }
   });
 };
 
 // ========================
-// DOWNLOAD (STREAM FIXED)
+// DOWNLOAD (FIXED FINAL)
 // ========================
-export const streamVideo = (req, res) => {
-  const { url } = req.query;
+export const startDownload = (req, res) => {
+  const { url, format_id } = req.body;
 
   if (!url || !url.startsWith("http")) {
     return res.status(400).json({ error: "invalid URL" });
   }
 
-  const cmd = `python -m yt_dlp -f "bestvideo+bestaudio/best" --merge-output-format mp4 -o - "${url}"`;
+  const id = Date.now().toString();
+  const filePath = path.join(DOWNLOAD_DIR, `${id}.mp4`);
 
-  const process = exec(cmd, { maxBuffer: 1024 * 1024 * 100 });
+  if (!format_id) {
+    return res.status(400).json({ error: "format_id required" });
+  }
 
-  res.setHeader("Content-Disposition", 'attachment; filename="video.mp4"');
-  res.setHeader("Content-Type", "application/octet-stream");
+  // 🔥 مهم جداً: نستخدم format_id فقط بدون أي fallback
+  const yt = spawn("python", [
+    "-m",
+    "yt_dlp",
+    "-f",
+    `${format_id}+bestaudio/best`,
+    "--merge-output-format",
+    "mp4",
+    "-o",
+    filePath,
+    url,
+  ]);
 
-  process.stdout.pipe(res);
-
-  process.stderr.on("data", (data) => {
+  yt.stderr.on("data", (data) => {
     console.log("yt-dlp:", data.toString());
+  });
+
+  yt.on("close", (code) => {
+    if (code !== 0) {
+      console.log("download failed");
+    }
+  });
+
+  return res.json({
+    id,
+    downloadUrl: `/file/${id}`,
+  });
+};
+
+// ========================
+// FILE SERVE
+// ========================
+export const getFile = (req, res) => {
+  const { id } = req.params;
+
+  const filePath = path.join(DOWNLOAD_DIR, `${id}.mp4`);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "file not ready" });
+  }
+
+  res.download(filePath, "video.mp4", () => {
+    fs.unlink(filePath, () => {});
   });
 };
