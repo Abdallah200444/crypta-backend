@@ -1,18 +1,7 @@
 import { spawn } from "child_process";
-import fs from "fs";
-import path from "path";
 
 // ========================
-// DOWNLOAD DIRECTORY
-// ========================
-const DOWNLOAD_DIR = path.resolve("downloads");
-
-if (!fs.existsSync(DOWNLOAD_DIR)) {
-  fs.mkdirSync(DOWNLOAD_DIR);
-}
-
-// ========================
-// INFO
+// INFO (نفسه تقريبًا)
 // ========================
 export const getInfo = (req, res) => {
   const { url } = req.body;
@@ -21,28 +10,24 @@ export const getInfo = (req, res) => {
     return res.status(400).json({ error: "invalid URL" });
   }
 
-  const cmd = spawn("python", [
+  const yt = spawn("python", [
     "-m",
     "yt_dlp",
-    "--no-playlist",
-    "--geo-bypass",
     "-J",
-    url,
+    url
   ]);
 
   let output = "";
 
-  cmd.stdout.on("data", (data) => {
-    output += data.toString();
-  });
+  yt.stdout.on("data", (d) => output += d.toString());
 
-  cmd.on("close", () => {
+  yt.on("close", () => {
     try {
       const data = JSON.parse(output);
 
       const formats = (data.formats || [])
-        .filter((f) => f.vcodec !== "none" && f.height)
-        .map((f) => ({
+        .filter(f => f.vcodec !== "none" && f.height)
+        .map(f => ({
           format_id: f.format_id,
           quality: `${f.height}p`,
           ext: f.ext,
@@ -50,38 +35,32 @@ export const getInfo = (req, res) => {
             ? `${(f.filesize / 1024 / 1024).toFixed(2)} MB`
             : null,
         }))
-        .sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
+        .sort((a, b) => b.quality.localeCompare(a.quality));
 
-      return res.json({
+      res.json({
         title: data.title,
         thumbnail: data.thumbnail,
         duration: data.duration,
         formats,
       });
+
     } catch {
-      return res.status(500).json({ error: "parse error" });
+      res.status(500).json({ error: "parse error" });
     }
   });
 };
 
-// ========================
-// DOWNLOAD (FIXED FINAL)
-// ========================
-export const startDownload = (req, res) => {
-  const { url, format_id } = req.body;
 
-  if (!url || !url.startsWith("http")) {
-    return res.status(400).json({ error: "invalid URL" });
+// ========================
+// 🔥 STREAM (البديل النهائي)
+// ========================
+export const streamVideo = (req, res) => {
+  const { url, format_id } = req.query;
+
+  if (!url || !format_id) {
+    return res.status(400).json({ error: "missing params" });
   }
 
-  const id = Date.now().toString();
-  const filePath = path.join(DOWNLOAD_DIR, `${id}.mp4`);
-
-  if (!format_id) {
-    return res.status(400).json({ error: "format_id required" });
-  }
-
-  // 🔥 مهم جداً: نستخدم format_id فقط بدون أي fallback
   const yt = spawn("python", [
     "-m",
     "yt_dlp",
@@ -90,39 +69,20 @@ export const startDownload = (req, res) => {
     "--merge-output-format",
     "mp4",
     "-o",
-    filePath,
-    url,
+    "-",
+    url
   ]);
 
-  yt.stderr.on("data", (data) => {
-    console.log("yt-dlp:", data.toString());
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Content-Disposition", "attachment; filename=video.mp4");
+
+  yt.stdout.pipe(res);
+
+  yt.stderr.on("data", (d) => {
+    console.log("yt-dlp:", d.toString());
   });
 
-  yt.on("close", (code) => {
-    if (code !== 0) {
-      console.log("download failed");
-    }
-  });
-
-  return res.json({
-    id,
-    downloadUrl: `/file/${id}`,
-  });
-};
-
-// ========================
-// FILE SERVE
-// ========================
-export const getFile = (req, res) => {
-  const { id } = req.params;
-
-  const filePath = path.join(DOWNLOAD_DIR, `${id}.mp4`);
-
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "file not ready" });
-  }
-
-  res.download(filePath, "video.mp4", () => {
-    fs.unlink(filePath, () => {});
+  yt.on("error", () => {
+    res.end();
   });
 };
