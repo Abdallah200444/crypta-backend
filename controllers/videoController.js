@@ -1,6 +1,4 @@
 import { exec } from "child_process";
-import fs from "fs";
-import path from "path";
 
 // ========================
 // INFO
@@ -16,7 +14,10 @@ export const getInfo = (req, res) => {
 
   exec(cmd, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout) => {
     if (err) {
-      return res.status(500).json({ error: "yt-dlp failed" });
+      console.log("yt-dlp error:", err);
+      return res.status(500).json({
+        error: err.message,
+      });
     }
 
     try {
@@ -25,18 +26,19 @@ export const getInfo = (req, res) => {
       const seen = new Set();
 
       const formats = (data.formats || [])
-        .filter(f =>
-          f.ext !== "mhtml" &&
-          f.vcodec !== "none" &&
-          f.height
+        .filter(
+          (f) =>
+            f.ext !== "mhtml" &&
+            f.vcodec !== "none" &&
+            f.height
         )
-        .filter(f => {
+        .filter((f) => {
           if (seen.has(f.height)) return false;
           seen.add(f.height);
           return true;
         })
         .sort((a, b) => (b.height || 0) - (a.height || 0))
-        .map(f => ({
+        .map((f) => ({
           format_id: f.format_id,
           quality: `${f.height}p`,
           ext: f.ext,
@@ -51,15 +53,15 @@ export const getInfo = (req, res) => {
         duration: data.duration,
         formats,
       });
-
-    } catch {
+    } catch (e) {
+      console.log("parse error:", e);
       res.status(500).json({ error: "parse error" });
     }
   });
 };
 
 // ========================
-// DOWNLOAD
+// DOWNLOAD (STREAM FIXED)
 // ========================
 export const streamVideo = (req, res) => {
   const { url } = req.query;
@@ -68,17 +70,16 @@ export const streamVideo = (req, res) => {
     return res.status(400).json({ error: "invalid URL" });
   }
 
-  const filePath = path.resolve(`video_${Date.now()}.mp4`);
+  const cmd = `python -m yt_dlp -f "bestvideo+bestaudio/best" --merge-output-format mp4 -o - "${url}"`;
 
-  const cmd = `python -m yt_dlp --no-playlist --geo-bypass -f "bestvideo+bestaudio/best" --merge-output-format mp4 -o "${filePath}" "${url}"`;
+  const process = exec(cmd, { maxBuffer: 1024 * 1024 * 100 });
 
-  exec(cmd, (err) => {
-    if (err) {
-      return res.status(500).json({ error: "download failed" });
-    }
+  res.setHeader("Content-Disposition", 'attachment; filename="video.mp4"');
+  res.setHeader("Content-Type", "application/octet-stream");
 
-    res.download(filePath, "video.mp4", () => {
-      fs.unlink(filePath, () => {});
-    });
+  process.stdout.pipe(res);
+
+  process.stderr.on("data", (data) => {
+    console.log("yt-dlp:", data.toString());
   });
 };
