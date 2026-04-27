@@ -10,12 +10,12 @@ export const getInfo = (req, res) => {
 
   if (!url) return res.status(400).json({ error: "invalid URL" });
 
-  const yt = spawn("python", [
-    "-m",
-    "yt_dlp",
-    "-J",
-    url
-  ]);
+  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const ytArgs = ["-m", "yt_dlp", "-J"];
+  if (fs.existsSync(cookiesPath)) ytArgs.push("--cookies", cookiesPath);
+  ytArgs.push(url);
+
+  const yt = spawn("python", ytArgs);
 
   let output = "";
   let errorOutput = "";
@@ -90,12 +90,14 @@ export const streamVideo = (req, res) => {
   const tempFileName = `video_${Date.now()}_${Math.floor(Math.random() * 10000)}.mp4`;
 const tempFilePath = path.join(process.cwd(), tempFileName);
 
+const cookiesPath = path.join(process.cwd(), "cookies.txt");
 const args = [
   "-f",
   format_id || "best",
-  "-o", tempFilePath,
-  url
+  "-o", tempFilePath
 ];
+if (fs.existsSync(cookiesPath)) args.push("--cookies", cookiesPath);
+args.push(url);
 
 const yt = spawn("python", ["-m", "yt_dlp", ...args]);
 
