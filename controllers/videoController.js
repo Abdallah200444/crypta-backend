@@ -103,6 +103,9 @@ args.push(url);
 
 const yt = spawn("python", ["-m", "yt_dlp", ...args]);
 
+let errorOutput = "";
+yt.stderr.on("data", (d) => errorOutput += d.toString());
+
 yt.on("close", (code) => {
   if (code === 0 && fs.existsSync(tempFilePath)) {
     res.download(tempFilePath, "video.mp4", (err) => {
@@ -111,8 +114,9 @@ yt.on("close", (code) => {
       }
     });
   } else {
+    console.error("Stream Video Error:", errorOutput);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    res.status(500).send("Error downloading video");
+    res.status(500).send(`Error downloading video: ${errorOutput}`);
   }
 });
 
