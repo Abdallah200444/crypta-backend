@@ -1,4 +1,6 @@
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 
 // ========================
 // GET INFO
@@ -23,13 +25,23 @@ export const getInfo = (req, res) => {
     try {
       const data = JSON.parse(output);
 
-      const formats = (data.formats || [])
+      // Filter formats to make sure we only present unique resolutions
+      // To prevent downloading 4k regardless, we ensure format_id is correctly mapped
+      const formatsMap = new Map();
+      (data.formats || [])
         .filter(f => f.vcodec !== "none" && f.height)
-        .map(f => ({
-          format_id: f.format_id,
-          quality: `${f.height}p`,
-          ext: f.ext,
-        }))
+        .forEach(f => {
+          const quality = `${f.height}p`;
+          if (!formatsMap.has(quality)) {
+            formatsMap.set(quality, {
+              format_id: f.format_id,
+              quality: quality,
+              ext: f.ext,
+            });
+          }
+        });
+
+      const formats = Array.from(formatsMap.values())
         .sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
 
       res.json({
@@ -52,21 +64,37 @@ export const streamVideo = (req, res) => {
 
   if (!url) return res.status(400).send("missing url");
 
+  const tempFileName = `video_${Date.now()}_${Math.floor(Math.random() * 10000)}.mp4`;
+  const tempFilePath = path.join(process.cwd(), tempFileName);
+
   const args = [
     "-f",
-    format_id || "best",
-    "-o",
-    "-",
+    format_id ? `${format_id}+bestaudio/best` : "best",
+    "--merge-output-format", "mp4",
+    "-o", tempFilePath,
     url
   ];
 
   const yt = spawn("python", ["-m", "yt_dlp", ...args]);
 
-  res.setHeader("Content-Type", "video/mp4");
+  yt.on("close", (code) => {
+    if (code === 0 && fs.existsSync(tempFilePath)) {
+      res.download(tempFilePath, "video.mp4", (err) => {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
+      });
+    } else {
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+      res.status(500).send("Error downloading video");
+    }
+  });
 
-  yt.stdout.pipe(res);
-
-  yt.stderr.on("data", (d) => {
-    console.log("yt-dlp:", d.toString());
+  // التنظيف عند الإلغاء
+  req.on("close", () => {
+    if (!yt.killed) yt.kill();
+    setTimeout(() => {
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    }, 10000); // إعطاء وقت لـ yt-dlp ليغلق قبل الحذف
   });
 };
