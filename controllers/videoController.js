@@ -14,7 +14,7 @@ export const getInfo = (req, res) => {
     "-m", "yt_dlp", 
     "--js-runtimes", "node", 
     "--remote-components", "ejs:github", 
-    "--extractor-args", "youtube:player_client=android,web",
+    "--extractor-args", "youtube:player_client=ios,android",
     "-J"
   ];
   ytArgs.push(url);
@@ -97,7 +97,7 @@ const tempFilePath = path.join(process.cwd(), tempFileName);
 const args = [
   "--js-runtimes", "node",
   "--remote-components", "ejs:github",
-  "--extractor-args", "youtube:player_client=android,web",
+  "--extractor-args", "youtube:player_client=ios,android",
   "-f",
   format_id || "best",
   "-o", tempFilePath
