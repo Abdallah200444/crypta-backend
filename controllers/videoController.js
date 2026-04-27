@@ -18,11 +18,24 @@ export const getInfo = (req, res) => {
   ]);
 
   let output = "";
+  let errorOutput = "";
 
   yt.stdout.on("data", (d) => output += d.toString());
+  yt.stderr.on("data", (d) => errorOutput += d.toString());
 
-  yt.on("close", () => {
+  yt.on("error", (err) => {
+    console.error("Spawn error:", err);
+    return res.status(500).json({ error: "Failed to start yt-dlp", details: err.message });
+  });
+
+  yt.on("close", (code) => {
     try {
+      if (code !== 0) {
+        console.error(`yt-dlp exited with code ${code}`);
+        console.error("stderr:", errorOutput);
+        return res.status(500).json({ error: `yt-dlp error: ${errorOutput}` });
+      }
+
       const data = JSON.parse(output);
 
       // Filter formats to make sure we only present unique resolutions
@@ -32,12 +45,19 @@ export const getInfo = (req, res) => {
         .filter(f => f.vcodec !== "none" && f.height)
         .forEach(f => {
           const quality = `${f.height}p`;
-          if (!formatsMap.has(quality)) {
-            formatsMap.set(quality, {
-              format_id: f.format_id,
-              quality: quality,
-              ext: f.ext,
-            });
+          const sizeBytes = f.filesize || f.filesize_approx || 0;
+          const sizeMB = sizeBytes ? (sizeBytes / (1024 * 1024)).toFixed(1) + " MB" : "غير معروف";
+          
+          const formatData = {
+            format_id: f.format_id,
+            quality: quality,
+            ext: f.ext,
+            size: sizeMB
+          };
+
+          // If it doesn't exist, set it. If it exists, prefer mp4 over others.
+          if (!formatsMap.has(quality) || (f.ext === "mp4" && formatsMap.get(quality).ext !== "mp4")) {
+            formatsMap.set(quality, formatData);
           }
         });
 
@@ -50,8 +70,11 @@ export const getInfo = (req, res) => {
         formats
       });
 
-    } catch {
-      res.status(500).json({ error: "parse error" });
+    } catch (err) {
+      console.error("Parse error. Output was:", output);
+      console.error("Stderr was:", errorOutput);
+      console.error("Exception:", err);
+      res.status(500).json({ error: "parse error", details: err.message, output, errorOutput });
     }
   });
 };
