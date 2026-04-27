@@ -11,7 +11,7 @@ export const getInfo = (req, res) => {
   if (!url) return res.status(400).json({ error: "invalid URL" });
 
   const cookiesPath = path.join(process.cwd(), "cookies.txt");
-  const ytArgs = ["-m", "yt_dlp", "-J"];
+  const ytArgs = ["-m", "yt_dlp", "--js-runtimes", "nodejs", "-J"];
   if (fs.existsSync(cookiesPath)) ytArgs.push("--cookies", cookiesPath);
   ytArgs.push(url);
 
@@ -92,6 +92,7 @@ const tempFilePath = path.join(process.cwd(), tempFileName);
 
 const cookiesPath = path.join(process.cwd(), "cookies.txt");
 const args = [
+  "--js-runtimes", "nodejs",
   "-f",
   format_id || "best",
   "-o", tempFilePath
